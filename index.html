@@ -66,8 +66,9 @@
 				obj.Arrivals = [];
 				obj.Departures = [];
 				
-				obj.RefactoryPeriod = 3;
-				obj.Threshold = 2;
+				obj.Decay = 10;
+				obj.RefactoryPeriod = 5;
+				obj.Threshold = 3;
 				
 				obj.ArrivalSampleIndex = 0;
 				obj.DepartureSampleIndex = 0;
@@ -81,57 +82,57 @@
 				var newArrivalIndex, newDepartureIndex;
 				var i, j;
 				var charge;
+				var time;
 				var distance;
 				var blocking;
 				for(i=inNeuron.ArrivalSampleIndex; i<inNeuron.Arrivals.length; i++)
 				{
-					if(inNeuron.Arrivals[i].ArrivalTime > inStart && inNeuron.Arrivals[i].ArrivalTime <= inStop)
+					time = inNeuron.Arrivals[i].ArrivalTime;
+					if(time > inStart && time <= inStop)
 					{
-						charge = Neuron.CalculateCharge(inNeuron, inNeuron.Arrivals[i].ArrivalTime);
-						console.log(charge);
+						charge = Neuron.Charge(inNeuron, time);
 						if(charge > inNeuron.Threshold)
 						{
 							// we have a strong enough charge to create a departure, but first check to see if we are in a refactory period before actually sending it out
-							blocking = false;
-							for(j=inNeuron.DepartureSampleIndex; j<inNeuron.Departures.length; j++)
-							{
-								distance = inNeuron.Arrivals[i].ArrivalTime - inNeuron.Departures[j].ArrivalTime;
-								if(distance >= 0 && distance <= inNeuron.RefactoryPeriod)
-								{
-									blocking = true;
-									break;
-								}
-							}
-							
-							if(!blocking)
+							if(!Neuron.Refactory(inNeuron, time))
 							{
 								// we are free to create the departing spike
 								for(j=0; j<inNeuron.Outputs.length; j++)
 								{
-									Spike.Create(inNeuron.Outputs[j], inNeuron.Arrivals[i].ArrivalTime);
+									Spike.Create(inNeuron.Outputs[j], time);
 								}
 							}
-							
 						}
 					}
 				}
-				
 			};
-			Neuron.CalculateCharge = function(inNeuron, inTime)
+			Neuron.Charge = function(inNeuron, inTime)
 			{
 				var i;
 				var sum = 0;
 				var dist = 0;
-				var falloff = 10;
 				for(i=0; i<inNeuron.Arrivals.length; i++)
 				{
 					dist = inNeuron.Arrivals[i].ArrivalTime - inTime;
 					if(dist < 0)
 					{
-						sum += inNeuron.Arrivals[i].Power * Math.pow(Math.E, dist/falloff);
+						sum += inNeuron.Arrivals[i].Power * Math.pow(Math.E, dist/inNeuron.Decay);
 					}
 				}
 				return sum;
+			};
+			Neuron.Refactory = function(inNeuron, inTime)
+			{
+				var i;
+				for(i=inNeuron.DepartureSampleIndex; i<inNeuron.Departures.length; i++)
+				{
+					distance = inTime - inNeuron.Departures[i].DepartureTime;
+					if(distance >= 0 && distance <= inNeuron.RefactoryPeriod)
+					{
+						return true;
+					}
+				}
+				return false;
 			};
 			
 			
@@ -145,7 +146,7 @@
 				obj.From = inFrom;
 				obj.To = inTo;
 				obj.Weight = 0.5;
-				obj.Stride = 1;
+				obj.Stride = 5;
 				obj.Normal = V.Add(inTo.Pos, V.Scale(inFrom.Pos, -1));
 				obj.Distance = V.Length(obj.Normal);
 				obj.Normal = V.Scale(obj.Normal, 1/obj.Distance);
@@ -240,21 +241,41 @@
 			View.Canvas.Spikes = View.JQ.CanvasSpikes.get(0).getContext("2d");
 
 			
-			View.UpdateNeurons = function()
+			View.UpdateNeurons = function(inTime)
 			{
 				View.Utility.ClearCanvas(View.Canvas.Neurons);
 				var i;
+				var size = 20;
+				var pos;
+				var charge;
 				for(i=0; i<Neuron.Instances.length; i++)
 				{
+					pos = Neuron.Instances[i].Pos;
+					
+					if(Neuron.Refactory(Neuron.Instances[i], inTime))
+					{
+						View.Canvas.Neurons.fillStyle = "red";
+						View.Canvas.Neurons.strokeStyle = "red";
+					}
+					else
+					{
+						View.Canvas.Neurons.fillStyle = "black";
+						View.Canvas.Neurons.strokeStyle = "black";
+					}
 					View.Canvas.Neurons.beginPath();
-					View.Canvas.Neurons.arc(Neuron.Instances[i].Pos.X, Neuron.Instances[i].Pos.Y, 10, 0, 2*Math.PI);
+					View.Canvas.Neurons.rect(pos.X-size/2, pos.Y-size/2, size, size);
 					View.Canvas.Neurons.stroke();
+					View.Canvas.Neurons.beginPath();
+					charge = Neuron.Charge(Neuron.Instances[i], inTime) / Neuron.Instances[i].Threshold;
+					View.Canvas.Neurons.rect(pos.X-size/2, pos.Y-size/2 + size - charge*size, size, charge*size);
+					View.Canvas.Neurons.fill();
 				}
 			};
 			View.UpdateConnections = function()
 			{
 				View.Utility.ClearCanvas(View.Canvas.Connections);
 				var i;
+				View.Canvas.Connections.lineWidth = "6";
 				for(i=0; i<Connection.Instances.length; i++)
 				{
 					View.Canvas.Connections.beginPath();
@@ -269,6 +290,7 @@
 				var i;
 				var lerp;
 				var spike;
+				View.Canvas.Spikes.fillStyle = "white";
 				for(i=0; i<Spike.Instances.length; i++)
 				{
 					spike = Spike.Instances[i];
@@ -279,8 +301,8 @@
 						var y = spike.Connection.From.Pos.Y + lerp*(spike.Connection.To.Pos.Y - spike.Connection.From.Pos.Y);
 						
 						View.Canvas.Spikes.beginPath();
-						View.Canvas.Spikes.arc(x, y, 2, 0, 2*Math.PI);
-						View.Canvas.Spikes.stroke();						
+						View.Canvas.Spikes.arc(x, y, 3, 0, 2*Math.PI);
+						View.Canvas.Spikes.fill();
 					}
 				}
 			}
@@ -288,6 +310,7 @@
 			View.JQ.Container.mousemove(function(e)
 			{
 				View.UpdateSpikes(e.pageX/2);
+				View.UpdateNeurons(e.pageX/2);
 			});
 		
 		</script>
